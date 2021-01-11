@@ -1,6 +1,5 @@
 import numpy as np
 import datetime
-import dask_xgboost as dxgb_gpu
 import dask
 import dask_cudf
 from dask_cuda import LocalCUDACluster
@@ -8,7 +7,6 @@ from dask.delayed import delayed
 from dask.distributed import Client, wait
 import xgboost as xgb
 import cudf
-from cudf.dataframe import DataFrame
 from collections import OrderedDict
 import gc
 from glob import glob
@@ -41,13 +39,16 @@ def null_workaround(df, **kwargs):
 
 def run_gpu_workflow(col_path, acq_path, quarter=1, year=2000, perf_file="", **kwargs):
     names = gpu_load_names(col_path=col_path)
+    names = hash_df_string_columns(names)
     acq_gdf = gpu_load_acquisition_csv(acquisition_path= acq_path + "/Acquisition_"
                                       + str(year) + "Q" + str(quarter) + ".txt")
+    acq_gdf = hash_df_string_columns(acq_gdf)
     acq_gdf = acq_gdf.merge(names, how='left', on=['seller_name'])
     acq_gdf.drop_column('seller_name')
     acq_gdf['seller_name'] = acq_gdf['new']
     acq_gdf.drop_column('new')
     perf_df_tmp = gpu_load_performance_csv(perf_file)
+    perf_df_tmp = hash_df_string_columns(perf_df_tmp)
     gdf = perf_df_tmp
     everdf = create_ever_features(gdf)
     delinq_merge = create_delinq_features(gdf)
@@ -190,7 +191,22 @@ def gpu_load_names(col_path):
 
     return cudf.read_csv(col_path, names=cols, delimiter='|', dtype=list(dtypes.values()), skiprows=1)
 
+def hash_df_string_columns(gdf):
+    """ Hash all string columns in a cudf dataframe
+ 
+    Returns
+    -------
+    Dataframe with all string columns replaced by hashed values for the strings
+    """
+    for col in gdf.columns:
+        if cudf.utils.dtypes.is_string_dtype(gdf[col]):
+            gdf[col] = gdf[col].hash_values()
+    return gdf
+
 def create_ever_features(gdf, **kwargs):
+    """ Creates features denoting whether a loan_id has ever been delinquent
+    for over 30, 90 and 180 days.
+    """
     everdf = gdf[['loan_id', 'current_loan_delinquency_status']]
     everdf = everdf.groupby('loan_id', method='hash').max().reset_index()
     del(gdf)
@@ -201,6 +217,9 @@ def create_ever_features(gdf, **kwargs):
     return everdf
 
 def create_delinq_features(gdf, **kwargs):
+    """ Computes features denoting the earliest reported date when a loan_id
+    became delinquent for more than 30, 90 and 180 days.
+    """
     delinq_gdf = gdf[['loan_id', 'monthly_reporting_period', 'current_loan_delinquency_status']]
     del(gdf)
     delinq_30 = delinq_gdf.query('current_loan_delinquency_status >= 1')[['loan_id', 'monthly_reporting_period']].groupby('loan_id', method='hash').min().reset_index()
@@ -223,15 +242,21 @@ def create_delinq_features(gdf, **kwargs):
     return delinq_merge
 
 def join_ever_delinq_features(everdf_tmp, delinq_merge, **kwargs):
+    """ 
+    Merges the ever and delinq features table on loan_id
+    """
     everdf = everdf_tmp.merge(delinq_merge, on=['loan_id'], how='left', type='hash')
     del(everdf_tmp)
     del(delinq_merge)
-    everdf['delinquency_30'] = everdf['delinquency_30'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
-    everdf['delinquency_90'] = everdf['delinquency_90'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
-    everdf['delinquency_180'] = everdf['delinquency_180'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
+#     everdf['delinquency_30'] = everdf['delinquency_30'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
+#     everdf['delinquency_90'] = everdf['delinquency_90'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
+#     everdf['delinquency_180'] = everdf['delinquency_180'].fillna(np.dtype('datetime64[ms]').type('1970-01-01').astype('datetime64[ms]'))
     return everdf
 
 def create_joined_df(gdf, everdf, **kwargs):
+    """
+    Join the performance table with the features table. (delinq and ever features)
+    """
     test = gdf[['loan_id', 'monthly_reporting_period', 'current_loan_delinquency_status', 'current_actual_upb']]
     del(gdf)
     test['timestamp'] = test['monthly_reporting_period']
@@ -242,26 +267,35 @@ def create_joined_df(gdf, everdf, **kwargs):
     test.drop_column('current_loan_delinquency_status')
     test['upb_12'] = test['current_actual_upb']
     test.drop_column('current_actual_upb')
-    test['upb_12'] = test['upb_12'].fillna(999999999)
-    test['delinquency_12'] = test['delinquency_12'].fillna(-1)
+#     test['upb_12'] = test['upb_12'].fillna(999999999)
+#     test['delinquency_12'] = test['delinquency_12'].fillna(-1)
     
     joined_df = test.merge(everdf, how='left', on=['loan_id'], type='hash')
     del(everdf)
     del(test)
     
-    joined_df['ever_30'] = joined_df['ever_30'].fillna(-1)
-    joined_df['ever_90'] = joined_df['ever_90'].fillna(-1)
-    joined_df['ever_180'] = joined_df['ever_180'].fillna(-1)
-    joined_df['delinquency_30'] = joined_df['delinquency_30'].fillna(-1)
-    joined_df['delinquency_90'] = joined_df['delinquency_90'].fillna(-1)
-    joined_df['delinquency_180'] = joined_df['delinquency_180'].fillna(-1)
+#     joined_df['ever_30'] = joined_df['ever_30'].fillna(-1)
+#     joined_df['ever_90'] = joined_df['ever_90'].fillna(-1)
+#     joined_df['ever_180'] = joined_df['ever_180'].fillna(-1)
+#     joined_df['delinquency_30'] = joined_df['delinquency_30'].fillna(-1)
+#     joined_df['delinquency_90'] = joined_df['delinquency_90'].fillna(-1)
+#     joined_df['delinquency_180'] = joined_df['delinquency_180'].fillna(-1)
     
-    joined_df['timestamp_year'] = joined_df['timestamp_year'].astype('int32')
-    joined_df['timestamp_month'] = joined_df['timestamp_month'].astype('int32')
+#     joined_df['timestamp_year'] = joined_df['timestamp_year'].astype('int32')
+#     joined_df['timestamp_month'] = joined_df['timestamp_month'].astype('int32')
     
     return joined_df
 
 def create_12_mon_features(joined_df, **kwargs):
+    """
+    For every loan_id in a 12 month window compute a feature denoting
+    whether it has been delinquent for over 3 months or had an unpaid principal balance.
+    The 12 month window moves by a month to span across all months of the year.
+    
+    The computations windows for each loan_id follows the pattern below
+    Window 1: Jan 2000 - Jan 2001, Jan 2001 - Jan 2002
+    Window 2: Feb 2000- Feb 2001, Feb 2001 - Feb 2002
+    """
     testdfs = []
     n_months = 12
 
@@ -283,6 +317,9 @@ def create_12_mon_features(joined_df, **kwargs):
     return cudf.concat(testdfs)
 
 def combine_joined_12_mon(joined_df, testdf, **kwargs):
+    """
+    Combines the 12_mon features table with the ever_delinq features tables
+    """
     joined_df.drop_column('delinquency_12')
     joined_df.drop_column('upb_12')
     joined_df['timestamp_year'] = joined_df['timestamp_year'].astype('int16')
@@ -302,11 +339,19 @@ def final_performance_delinquency(gdf, joined_df, **kwargs):
     return merged
 
 def join_perf_acq_gdfs(perf, acq, **kwargs):
-    perf = null_workaround(perf)
-    acq = null_workaround(acq)
+    """
+    Combines the Acquisition and Performance tables on loan_id
+    """
     return perf.merge(acq, how='left', on=['loan_id'], type='hash')
 
 def last_mile_cleaning(df, **kwargs):
+    """ Final cleanup to drop columns not passed to the XGBoost model for training.
+    Convert all string/categorical features to numeric features.
+
+    Returns
+    ------
+    Arrow Table (Host memory)
+    """
     drop_list = [
         'loan_id', 'orig_date', 'first_pay_date', 'seller_name',
         'monthly_reporting_period', 'last_paid_installment_date', 'maturity_date', 'ever_30', 'ever_90', 'ever_180',
@@ -314,8 +359,7 @@ def last_mile_cleaning(df, **kwargs):
         'zero_balance_effective_date','foreclosed_after', 'disposition_date','timestamp'
     ]
 
-    for column in drop_list:
-        df.drop_column(column)
+    df.drop(columns=drop_list, inplace=True)
     for col, dtype in df.dtypes.iteritems():
         if str(dtype)=='category':
             df[col] = df[col].cat.codes
@@ -323,7 +367,7 @@ def last_mile_cleaning(df, **kwargs):
     df['delinquency_12'] = df['delinquency_12'] > 0
     df['delinquency_12'] = df['delinquency_12'].fillna(False).astype('int32')
     for column in df.columns:
-        df[column] = df[column].fillna(-1)
+        df[column] = df[column].fillna(np.dtype(str(df[column].dtype)).type(-1))
     return df.to_arrow(preserve_index=False)
 
 def main():
@@ -432,7 +476,7 @@ def main():
     
     print('Training parameters are {0}'.format(dxgb_gpu_params))
     
-    gpu_dfs = [delayed(DataFrame.from_arrow)(gpu_df) for gpu_df in gpu_dfs[:part_count]]
+    gpu_dfs = [delayed(cudf.DataFrame.from_arrow)(gpu_df) for gpu_df in gpu_dfs[:part_count]]
     gpu_dfs = [gpu_df for gpu_df in gpu_dfs]
     wait(gpu_dfs)
     
@@ -461,7 +505,7 @@ def main():
     # TRAIN THE MODEL
     labels = None
     t1 = datetime.datetime.now()
-    bst = dxgb_gpu.train(client, dxgb_gpu_params, gpu_dfs, labels, num_boost_round=dxgb_gpu_params['nround'])
+    bst = xgb.dask.train(client, dxgb_gpu_params, gpu_dfs, labels, num_boost_round=dxgb_gpu_params['nround'])
     t2 = datetime.datetime.now()
     print('\n---->>>> Training time: {0} <<<<----\n'.format(str(t2-t1)))
     print('Exiting script')
