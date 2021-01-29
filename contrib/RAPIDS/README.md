@@ -11,15 +11,15 @@ The following examples are available:
     
 ## 1) RAPIDS Hyperparameter Optimization (HPO) on AzureML
     
-This example is available from: https://github.com/Azure/azureml-examples/tree/main/tutorials/using-rapids, and will walk you through GPU-accelerated HPO jobs on AzureML. You will be able to train and evaluate models with many different variations of key parameters in order to find the combination that yields the highest accuracy. 
+This example is available from: https://github.com/Azure/azureml-examples/tree/main/tutorials/using-rapids, and will walk you through single GPU and single-node multi-GPU accelerated HPO jobs on AzureML. You will be able to train and evaluate models with many different variations of key parameters in order to find the combination that yields the highest accuracy. 
     
-## 2) RAPIDS Multi-Node Multi-GPU using Dask Cloud Provider
+## 2) RAPIDS Multi-Node Multi-GPU Training using Dask Cloud Provider
     
-This notebook: https://github.com/rapidsai/cloud-ml-examples/blob/main/azure/notebooks/azure_mnmg.ipynb will use the [AzureVMCluster](https://cloudprovider.dask.org/en/latest/azure.html#azurevm) class from [Dask Cloud Provider](https://cloudprovider.dask.org/en/latest/) to set up a Dask cluster on Azure VM instances.
+This notebook: https://github.com/rapidsai/cloud-ml-examples/blob/main/azure/notebooks/azure_mnmg.ipynb will use the [AzureVMCluster](https://cloudprovider.dask.org/en/latest/azure.html#azurevm) class from [Dask Cloud Provider](https://cloudprovider.dask.org/en/latest/) to set up a Dask cluster on Azure VM instances and train a multi-node multi-GPU Random Forest model.
     
 ## 3) RAPIDS End-to-End (E2E) Mortgage Workflow
 
-The example below will use a dataset from [Fannie Mae’s Single-Family Loan Performance Data](http://www.fanniemae.com/portal/funding-the-market/data/loan-performance-data.html) and the processed dataset is available at (RAPIDS Datasets Homepage) [https://docs.rapids.ai/datasets/mortgage-data], which is redistributed with permission and consent from Fannie Mae (note the example below has not been updated with the latest version of RAPIDS, recent examples are available in the repositories mentioned above).  
+The example below will use a dataset from [Fannie Mae’s Single-Family Loan Performance Data](http://www.fanniemae.com/portal/funding-the-market/data/loan-performance-data.html) and the processed dataset is available at [RAPIDS Datasets Homepage](https://docs.rapids.ai/datasets/mortgage-data), which is redistributed with permission and consent from Fannie Mae (note the example below has not been updated with the latest version of RAPIDS, recent examples are available in the repositories mentioned above).  
  
 &nbsp;  
 ### Getting and running the material 
